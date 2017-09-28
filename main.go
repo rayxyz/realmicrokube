@@ -8,9 +8,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	db "realmicrokube/db"
 
 	appsv1beta1 "k8s.io/api/apps/v1beta1"
 	apiv1 "k8s.io/api/core/v1"
@@ -29,6 +32,10 @@ func homeDir() string {
 }
 
 func init() {
+	// doInit()
+}
+
+func doInit() {
 	var kubeconfig *string
 	if home := homeDir(); home != "" {
 		kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
@@ -49,7 +56,6 @@ func init() {
 		log.Println("Create client set error.")
 		panic(err.Error())
 	}
-
 }
 
 func checkPods(w http.ResponseWriter, r *http.Request) {
@@ -154,9 +160,25 @@ func newDeployment(w http.ResponseWriter, r *http.Request) {
 	log.Println("Successfully deployed a deployment. Deployment name => ", deploy.GetObjectMeta().GetName())
 }
 
+func queryUCount(w http.ResponseWriter, r *http.Request) {
+	db := db.NewDB()
+	count, err := db.QueryUserCount()
+	defer func() {
+		if db != nil {
+			db.Close()
+		}
+	}()
+	if err != nil {
+		log.Println(err.Error())
+		return
+	}
+	fmt.Println("The user count => ", count)
+	w.Write([]byte("The user count is => " + strconv.Itoa(count)))
+}
+
 func main() {
 	if clientset == nil {
-		panic("Client set is nil.")
+		// panic("Client set is nil.")
 	}
 
 	port := "7878"
@@ -167,6 +189,7 @@ func main() {
 	http.HandleFunc("/showpods", showPods)
 	http.HandleFunc("/checkpods", checkPods)
 	http.HandleFunc("/newdeploy", newDeployment)
+	http.HandleFunc("/ucount", queryUCount)
 	log.Println("Server running on port => ", port)
 	http.ListenAndServe(":"+port, nil)
 }
