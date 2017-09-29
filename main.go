@@ -2,24 +2,22 @@ package main
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	db "realmicrokube/db"
+	db "realmicrokube/service/db"
 
 	appsv1beta1 "k8s.io/api/apps/v1beta1"
 	apiv1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/rest"
 )
 
 var clientset *kubernetes.Clientset
@@ -32,28 +30,40 @@ func homeDir() string {
 }
 
 func init() {
-	// doInit()
+	doInit()
 }
 
 func doInit() {
-	var kubeconfig *string
-	if home := homeDir(); home != "" {
-		kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
-	} else {
-		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
-	}
-	flag.Parse()
+	// Out of cluster
+	// var kubeconfig *string
+	// if home := homeDir(); home != "" {
+	// 	kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
+	// } else {
+	// 	kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
+	// }
+	// flag.Parse()
+	//
+	// // use the current context in kubeconfig
+	// config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
+	// if err != nil {
+	// 	panic(err.Error())
+	// }
 
-	// use the current context in kubeconfig
-	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
+	// create the clientset
+	// clientset, err = kubernetes.NewForConfig(config)
+	// if err != nil {
+	// 	log.Println("Create client set error.")
+	// 	panic(err.Error())
+	// }
+
+	// In cluster
+	config, err := rest.InClusterConfig()
 	if err != nil {
 		panic(err.Error())
 	}
-
-	// create the clientset
+	// creates the clientset
 	clientset, err = kubernetes.NewForConfig(config)
 	if err != nil {
-		log.Println("Create client set error.")
 		panic(err.Error())
 	}
 }
@@ -61,7 +71,7 @@ func doInit() {
 func checkPods(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("Checking pods...")
 	for {
-		pods, err := clientset.CoreV1().Pods("").List(metav1.ListOptions{})
+		pods, err := clientset.CoreV1().Pods("default").List(metav1.ListOptions{})
 		if err != nil {
 			panic(err.Error())
 		}
@@ -95,7 +105,7 @@ type PodObj struct {
 
 func showPods(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("Show pods.")
-	pods, err := clientset.CoreV1().Pods("").List(metav1.ListOptions{})
+	pods, err := clientset.CoreV1().Pods("default").List(metav1.ListOptions{})
 	if err != nil {
 		panic(err.Error())
 	}
@@ -114,6 +124,7 @@ func showPods(w http.ResponseWriter, r *http.Request) {
 	}
 	podListMarshaled, _ := json.Marshal(podList)
 	w.Write(podListMarshaled)
+	w.Write([]byte(fmt.Sprintf("There are %d pods in the cluster\n", len(pods.Items))))
 }
 
 func int32Ptr(i int32) *int32 { return &i }
@@ -178,7 +189,7 @@ func queryUCount(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	if clientset == nil {
-		// panic("Client set is nil.")
+		panic("Client set is nil.")
 	}
 
 	port := "7878"

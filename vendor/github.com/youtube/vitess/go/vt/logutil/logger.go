@@ -1,0 +1,325 @@
+package logutil
+
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"runtime"
+	"strings"
+	"sync"
+	"time"
+
+	logutilpb "github.com/youtube/vitess/go/vt/proto/logutil"
+)
+
+// Logger defines the interface to use for our logging interface.
+// All methods should be thread safe (i.e. multiple go routines can
+// call these methods simultaneously).
+type Logger interface {
+	// The three usual interfaces, format should not contain the trailing '\n'
+	Infof(format string, v ...interface{})
+	Warningf(format string, v ...interface{})
+	Errorf(format string, v ...interface{})
+
+	// Printf will just display information on stdout when possible,
+	// and will not add any '\n'.
+	Printf(format string, v ...interface{})
+}
+
+// EventToBuffer formats an individual Event into a buffer, without the
+// final '\n'
+func EventToBuffer(event *logutilpb.Event, buf *bytes.Buffer) {
+	// Avoid Fprintf, for speed. The format is so simple that we
+	// can do it quickly by hand.  It's worth about 3X. Fprintf is hard.
+
+	// Lmmdd hh:mm:ss.uuuuuu file:line]
+	switch event.Level {
+	case logutilpb.Level_INFO:
+		buf.WriteByte('I')
+	case logutilpb.Level_WARNING:
+		buf.WriteByte('W')
+	case logutilpb.Level_ERROR:
+		buf.WriteByte('E')
+	case logutilpb.Level_CONSOLE:
+		buf.WriteString(event.Value)
+		return
+	}
+
+	t := ProtoToTime(event.Time)
+	_, month, day := t.Date()
+	hour, minute, second := t.Clock()
+	twoDigits(buf, int(month))
+	twoDigits(buf, day)
+	buf.WriteByte(' ')
+	twoDigits(buf, hour)
+	buf.WriteByte(':')
+	twoDigits(buf, minute)
+	buf.WriteByte(':')
+	twoDigits(buf, second)
+	buf.WriteByte('.')
+	nDigits(buf, 6, t.Nanosecond()/1000, '0')
+	buf.WriteByte(' ')
+	buf.WriteString(event.File)
+	buf.WriteByte(':')
+	someDigits(buf, event.Line)
+	buf.WriteByte(']')
+	buf.WriteByte(' ')
+	buf.WriteString(event.Value)
+}
+
+// EventString returns the line in one string
+func EventString(event *logutilpb.Event) string {
+	buf := new(bytes.Buffer)
+	EventToBuffer(event, buf)
+	return buf.String()
+}
+
+// ChannelLogger is a Logger that sends the logging events through a channel for
+// consumption.
+type ChannelLogger chan *logutilpb.Event
+
+// NewChannelLogger returns a ChannelLogger fo the given size
+func NewChannelLogger(size int) ChannelLogger {
+	return make(chan *logutilpb.Event, size)
+}
+
+// Infof is part of the Logger interface
+func (cl ChannelLogger) Infof(format string, v ...interface{}) {
+	file, line := fileAndLine(2)
+	(chan *logutilpb.Event)(cl) <- &logutilpb.Event{
+		Time:  TimeToProto(time.Now()),
+		Level: logutilpb.Level_INFO,
+		File:  file,
+		Line:  line,
+		Value: fmt.Sprintf(format, v...),
+	}
+}
+
+// Warningf is part of the Logger interface
+func (cl ChannelLogger) Warningf(format string, v ...interface{}) {
+	file, line := fileAndLine(2)
+	(chan *logutilpb.Event)(cl) <- &logutilpb.Event{
+		Time:  TimeToProto(time.Now()),
+		Level: logutilpb.Level_WARNING,
+		File:  file,
+		Line:  line,
+		Value: fmt.Sprintf(format, v...),
+	}
+}
+
+// Errorf is part of the Logger interface
+func (cl ChannelLogger) Errorf(format string, v ...interface{}) {
+	file, line := fileAndLine(2)
+	(chan *logutilpb.Event)(cl) <- &logutilpb.Event{
+		Time:  TimeToProto(time.Now()),
+		Level: logutilpb.Level_ERROR,
+		File:  file,
+		Line:  line,
+		Value: fmt.Sprintf(format, v...),
+	}
+}
+
+// Printf is part of the Logger interface
+func (cl ChannelLogger) Printf(format string, v ...interface{}) {
+	file, line := fileAndLine(2)
+	(chan *logutilpb.Event)(cl) <- &logutilpb.Event{
+		Time:  TimeToProto(time.Now()),
+		Level: logutilpb.Level_CONSOLE,
+		File:  file,
+		Line:  line,
+		Value: fmt.Sprintf(format, v...),
+	}
+}
+
+// MemoryLogger keeps the logging events in memory.
+// All protected by a mutex.
+type MemoryLogger struct {
+	mu     sync.Mutex
+	Events []*logutilpb.Event
+}
+
+// NewMemoryLogger returns a new MemoryLogger
+func NewMemoryLogger() *MemoryLogger {
+	return &MemoryLogger{}
+}
+
+// Infof is part of the Logger interface
+func (ml *MemoryLogger) Infof(format string, v ...interface{}) {
+	file, line := fileAndLine(2)
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	ml.Events = append(ml.Events, &logutilpb.Event{
+		Time:  TimeToProto(time.Now()),
+		Level: logutilpb.Level_INFO,
+		File:  file,
+		Line:  line,
+		Value: fmt.Sprintf(format, v...),
+	})
+}
+
+// Warningf is part of the Logger interface
+func (ml *MemoryLogger) Warningf(format string, v ...interface{}) {
+	file, line := fileAndLine(2)
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	ml.Events = append(ml.Events, &logutilpb.Event{
+		Time:  TimeToProto(time.Now()),
+		Level: logutilpb.Level_WARNING,
+		File:  file,
+		Line:  line,
+		Value: fmt.Sprintf(format, v...),
+	})
+}
+
+// Errorf is part of the Logger interface
+func (ml *MemoryLogger) Errorf(format string, v ...interface{}) {
+	file, line := fileAndLine(2)
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	ml.Events = append(ml.Events, &logutilpb.Event{
+		Time:  TimeToProto(time.Now()),
+		Level: logutilpb.Level_ERROR,
+		File:  file,
+		Line:  line,
+		Value: fmt.Sprintf(format, v...),
+	})
+}
+
+// Printf is part of the Logger interface
+func (ml *MemoryLogger) Printf(format string, v ...interface{}) {
+	file, line := fileAndLine(2)
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	ml.Events = append(ml.Events, &logutilpb.Event{
+		Time:  TimeToProto(time.Now()),
+		Level: logutilpb.Level_CONSOLE,
+		File:  file,
+		Line:  line,
+		Value: fmt.Sprintf(format, v...),
+	})
+}
+
+// String returns all the lines in one String, separated by '\n'
+func (ml *MemoryLogger) String() string {
+	buf := new(bytes.Buffer)
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	for _, event := range ml.Events {
+		EventToBuffer(event, buf)
+		buf.WriteByte('\n')
+	}
+	return buf.String()
+}
+
+// LoggerWriter is an adapter that implements the io.Writer interface.
+type LoggerWriter struct {
+	logger Logger
+}
+
+// NewLoggerWriter returns an io.Writer on top of the logger
+func NewLoggerWriter(logger Logger) io.Writer {
+	return LoggerWriter{
+		logger: logger,
+	}
+}
+
+// Write implements io.Writer
+func (lw LoggerWriter) Write(p []byte) (n int, err error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	lw.logger.Printf("%v", string(p))
+	return len(p), nil
+}
+
+// TeeLogger is a Logger that sends its logs to two underlying logger
+type TeeLogger struct {
+	One, Two Logger
+}
+
+// NewTeeLogger returns a logger that sends its logs to both loggers
+func NewTeeLogger(one, two Logger) *TeeLogger {
+	return &TeeLogger{
+		One: one,
+		Two: two,
+	}
+}
+
+// Infof is part of the Logger interface
+func (tl *TeeLogger) Infof(format string, v ...interface{}) {
+	tl.One.Infof(format, v...)
+	tl.Two.Infof(format, v...)
+}
+
+// Warningf is part of the Logger interface
+func (tl *TeeLogger) Warningf(format string, v ...interface{}) {
+	tl.One.Warningf(format, v...)
+	tl.Two.Warningf(format, v...)
+}
+
+// Errorf is part of the Logger interface
+func (tl *TeeLogger) Errorf(format string, v ...interface{}) {
+	tl.One.Errorf(format, v...)
+	tl.Two.Errorf(format, v...)
+}
+
+// Printf is part of the Logger interface
+func (tl *TeeLogger) Printf(format string, v ...interface{}) {
+	tl.One.Printf(format, v...)
+	tl.Two.Printf(format, v...)
+}
+
+// array for fast int -> string conversion
+const digits = "0123456789"
+
+// twoDigits adds a zero-prefixed two-digit integer to buf
+func twoDigits(buf *bytes.Buffer, value int) {
+	buf.WriteByte(digits[value/10])
+	buf.WriteByte(digits[value%10])
+}
+
+// nDigits adds an n-digit integer d to buf
+// padding with pad on the left.
+// It assumes d >= 0.
+func nDigits(buf *bytes.Buffer, n, d int, pad byte) {
+	tmp := make([]byte, n)
+	j := n - 1
+	for ; j >= 0 && d > 0; j-- {
+		tmp[j] = digits[d%10]
+		d /= 10
+	}
+	for ; j >= 0; j-- {
+		tmp[j] = pad
+	}
+	buf.Write(tmp)
+}
+
+// someDigits adds a zero-prefixed variable-width integer to buf
+func someDigits(buf *bytes.Buffer, d int64) {
+	// Print into the top, then copy down.
+	tmp := make([]byte, 10)
+	j := 10
+	for {
+		j--
+		tmp[j] = digits[d%10]
+		d /= 10
+		if d == 0 {
+			break
+		}
+	}
+	buf.Write(tmp[j:])
+}
+
+// fileAndLine returns the caller's file and line 2 levels above
+func fileAndLine(depth int) (string, int64) {
+	_, file, line, ok := runtime.Caller(depth)
+	if !ok {
+		return "???", 1
+	}
+
+	slash := strings.LastIndex(file, "/")
+	if slash >= 0 {
+		file = file[slash+1:]
+	}
+	return file, int64(line)
+}
