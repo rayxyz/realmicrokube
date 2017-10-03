@@ -1,10 +1,11 @@
-package server
+package main
 
 import (
 	"log"
 	micro "realmicrokube/micro"
 	pb "realmicrokube/service/proto"
-	db "realmicrokube/service/sddb"
+	// db "realmicrokube/service/sddb"
+	db "realmicrokube/service/db"
 
 	"golang.org/x/net/context"
 )

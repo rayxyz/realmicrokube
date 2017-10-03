@@ -1,14 +1,19 @@
 package micro
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
+	"io/ioutil"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
+	"realmicrokube/utils"
 	"reflect"
 	"strconv"
+	"time"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -17,14 +22,17 @@ import (
 	"golang.org/x/net/context"
 
 	"google.golang.org/grpc"
+	"k8s.io/api/apps/v1beta2"
 	kbapiv1 "k8s.io/api/core/v1"
-	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 var clientset *kubernetes.Clientset
 
 func init() {
 	log.Println("Initializing micro...")
+	initKubeInCluster()
 }
 
 func homeDir() string {
@@ -74,12 +82,25 @@ func initKubeInCluster() {
 type Service struct {
 	Config       *ServiceConfig
 	NewClientRef interface{}
+	KubeService  *KubeService
 }
 
-// type KubeService struct {
-// 	Host string
-// 	Port int
-// }
+type KubeServiceDeployConfig struct {
+	Namespace  string
+	Name       string
+	Port       int32
+	TargetPort int32
+	Image      string
+	Replicas   int32
+}
+
+type KubeService struct {
+	Namespace  string
+	Name       string
+	Port       int32
+	TargetPort int32
+	Endpoints  kbapiv1.Endpoints
+}
 
 func NewService(config *ServiceConfig, server interface{}, grpcRegisterServer interface{}) {
 	listeningAddr := config.Host + ":" + strconv.Itoa(config.Port)
@@ -103,11 +124,109 @@ func NewService(config *ServiceConfig, server interface{}, grpcRegisterServer in
 	}
 }
 
+func DeployKubeService(deployment *KubeServiceDeployConfig) (success bool, desc string) {
+	deploy, err := newKubeDeployment(deployment)
+	if err != nil {
+		return false, err.Error()
+	}
+	log.Println("Successfully deployed kube deployment, uid => ", deploy.GetUID())
+	svc, err := newKubeService(&KubeService{
+		Name:       deployment.Name,
+		Namespace:  deployment.Namespace,
+		Port:       deployment.Port,
+		TargetPort: deployment.TargetPort,
+	})
+	log.Println("Successfully create kube service, uid => ", svc.GetObjectMeta().GetUID())
+	if err != nil {
+		return false, err.Error()
+	}
+	return true, ""
+}
+
+func newKubeDeployment(deploy *KubeServiceDeployConfig) (*v1beta2.Deployment, error) {
+	deployment := &v1beta2.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: deploy.Name,
+			CreationTimestamp: metav1.Time{
+				Time: time.Now(),
+			},
+			Labels: map[string]string{
+				"app": deploy.Name,
+			},
+		},
+		Spec: v1beta2.DeploymentSpec{
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": deploy.Name,
+				},
+			},
+			Replicas: utils.Int32Ptr(deploy.Replicas),
+			Template: kbapiv1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app": deploy.Name,
+					},
+				},
+				Spec: kbapiv1.PodSpec{
+					Containers: []kbapiv1.Container{
+						{
+							Name:  deploy.Name,
+							Image: deploy.Image,
+							Ports: []kbapiv1.ContainerPort{
+								{
+									Name:          "port",
+									Protocol:      kbapiv1.ProtocolTCP,
+									ContainerPort: int32(deploy.Port),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	dep, err := clientset.Apps().Deployments(deploy.Namespace).Create(deployment)
+	if err != nil {
+		return nil, err
+	}
+	return dep, nil
+}
+
+func newKubeService(service *KubeService) (*kbapiv1.Service, error) {
+	svc, err := clientset.CoreV1().Services(service.Namespace).Create(&kbapiv1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: service.Name,
+			Labels: map[string]string{
+				"app": service.Name,
+			},
+		},
+		Spec: kbapiv1.ServiceSpec{
+			Type: kbapiv1.ServiceTypeNodePort,
+			Selector: map[string]string{
+				"app": service.Name,
+			},
+			Ports: []kbapiv1.ServicePort{
+				{
+					Port: int32(service.Port),
+					TargetPort: intstr.IntOrString{
+						IntVal: service.TargetPort,
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return svc, nil
+}
+
 func NewServiceClient(service string, newClientRef interface{}) (*Service, error) {
 	if service == "" || newClientRef == nil {
 		return nil, errors.New("Create service client error. Arguments nil.")
 	}
 	srv, err := queryKubeService("default", service)
+
 	srvConf := &ServiceConfig{
 		Host: srv.Spec.ClusterIP,
 		Port: int(srv.Spec.Ports[0].Port),
@@ -115,19 +234,38 @@ func NewServiceClient(service string, newClientRef interface{}) (*Service, error
 	if err != nil {
 		return nil, err
 	}
-	return &Service{Config: srvConf, NewClientRef: newClientRef}, nil
+
+	var endpoints kbapiv1.Endpoints
+	resp, err := http.Get("/api/v1/endpoints/" + service)
+	content, err := ioutil.ReadAll(resp.Body)
+	json.Unmarshal(content, &endpoints)
+	log.Println("Service end points => ", endpoints)
+
+	kubesvc := &KubeService{
+		Namespace: srv.Namespace,
+		Name:      srv.Name,
+		Endpoints: endpoints,
+	}
+
+	return &Service{Config: srvConf, NewClientRef: newClientRef, KubeService: kubesvc}, nil
 }
 
 func queryKubeService(namespace, service string) (*kbapiv1.Service, error) {
-	srv, err := clientset.CoreV1().Services(namespace).Get(service, meta.GetOptions{})
+	srv, err := clientset.CoreV1().Services(namespace).Get(service, metav1.GetOptions{})
 	if err != nil {
 		log.Println(err)
 		return nil, err
 	}
+	log.Println("I got the service => ", service)
 	return srv, nil
 }
 
 func (s *Service) Call(method string, ctx context.Context, reqObj interface{}) (interface{}, error) {
+	// Use grpc locad balancing strategy.
+	// grpc.WithBalancer(grpc.RoundRobin(r))
+	// if err := c.do(ctx, "GET", c.nsEndpoint()+"endpoints/"+serviceName, &res); err != nil {
+	// 	return nil, err
+	// }
 	address := s.Config.Host + ":" + strconv.Itoa(s.Config.Port)
 	conn, err := grpc.Dial(address)
 	if err != nil {

@@ -13,6 +13,8 @@ import (
 
 	db "realmicrokube/service/db"
 
+	"realmicrokube/micro"
+
 	appsv1beta1 "k8s.io/api/apps/v1beta1"
 	apiv1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -171,6 +173,23 @@ func newDeployment(w http.ResponseWriter, r *http.Request) {
 	log.Println("Successfully deployed a deployment. Deployment name => ", deploy.GetObjectMeta().GetName())
 }
 
+func deployService(w http.ResponseWriter, r *http.Request) {
+	deployConfig := &micro.KubeServiceDeployConfig{
+		Namespace:  apiv1.NamespaceDefault,
+		Name:       "com-shendu-service-usercenter-user",
+		Port:       int32(83),
+		TargetPort: int32(9999),
+		Image:      "ray-xyz.com:9090/realmicroserver",
+		Replicas:   1,
+	}
+	success, desc := micro.DeployKubeService(deployConfig)
+	if !success {
+		w.Write([]byte(fmt.Sprintf("Deploy kubernetes service failed. Deployment description => %s", desc)))
+		return
+	}
+	w.Write([]byte("Deploy kubernetes service => " + deployConfig.Name + ", image => " + deployConfig.Image))
+}
+
 func queryUCount(w http.ResponseWriter, r *http.Request) {
 	db := db.NewDB()
 	count, err := db.QueryUserCount()
@@ -199,7 +218,7 @@ func main() {
 	})
 	http.HandleFunc("/showpods", showPods)
 	http.HandleFunc("/checkpods", checkPods)
-	http.HandleFunc("/newdeploy", newDeployment)
+	http.HandleFunc("/deploysvc", deployService)
 	http.HandleFunc("/ucount", queryUCount)
 	log.Println("Server running on port => ", port)
 	http.ListenAndServe(":"+port, nil)
