@@ -16,6 +16,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
+	lb "realmicrokube/grpclb"
+
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"k8s.io/api/apps/v1beta2"
@@ -99,9 +101,12 @@ type KubeService struct {
 }
 
 func NewService(config *ServiceConfig, server interface{}, grpcRegisterServer interface{}) {
-	listeningAddr := config.Host + ":" + strconv.Itoa(config.Port)
+	// If you want to server all clients, please do not use host:port format, insted you should
+	// use :port format to listen on port `port` and to serve all clients whatever their IPs are.
+	// listeningAddr := config.Host + ":" + strconv.Itoa(config.Port)
+	listeningAddr := ":" + strconv.Itoa(config.Port)
 	listener, err := net.Listen("tcp", listeningAddr)
-	log.Println("Service listening at =>", listeningAddr)
+	log.Println(">>> Service listening at =>", listeningAddr)
 	if err != nil {
 		log.Println(err.Error())
 		os.Exit(-1)
@@ -236,27 +241,7 @@ func NewServiceClient(service string, newClientRef interface{}) (*Service, error
 	if err != nil {
 		log.Println("Get endpoints error ", err)
 	}
-	// hc := &http.Client{}
-	//
-	// req, err := http.NewRequest("GET", "/api/v1/endpoints", nil)
-	// if err != nil {
-	// 	log.Println(err)
-	// 	return nil, err
-	// }
-	// resp, err := hc.Do(req)
-	// if err != nil && resp != nil {
-	// 	defer resp.Body.Close()
-	// }
-	// if err != nil {
-	// 	log.Println("Connection to log server error.")
-	// 	return nil, err
-	// }
-	// if resp.StatusCode == 200 {
-	// 	log.Println("Send log to logserver ok!")
-	// }
-	// log.Println("status => ", resp.Status, "status_code => ", resp.StatusCode)
-	// content, err := ioutil.ReadAll(resp.Body)
-	// json.Unmarshal(content, &endpoints)
+
 	log.Println(endpoints)
 
 	kubesvc := &KubeService{
@@ -280,16 +265,12 @@ func queryKubeService(namespace, service string) (*kbapiv1.Service, error) {
 
 func (s *Service) Call(method string, ctx context.Context, reqObj interface{}) (interface{}, error) {
 	// Use grpc locad balancing strategy.
-	// grpc.WithBalancer(grpc.RoundRobin(r))
-	// if err := c.do(ctx, "GET", c.nsEndpoint()+"endpoints/"+serviceName, &res); err != nil {
-	// 	return nil, err
-	// }
+	grpc.WithBalancer(grpc.RoundRobin(lb.NewResolver()))
 	endaddrs := s.KubeService.Endpoints.Subsets[0].Addresses
 	log.Println(endaddrs)
 	// address := s.Config.Host + ":" + strconv.Itoa(s.Config.Port)
 	address := endaddrs[0].IP + ":" + strconv.Itoa(int(s.KubeService.Endpoints.Subsets[0].Ports[0].Port))
 	log.Println("IP address => ", address)
-	// auth, _ := credentials.
 	conn, err := grpc.Dial(address, grpc.WithInsecure())
 	if err != nil {
 		log.Println("Connection to server error.")
@@ -312,24 +293,33 @@ func (s *Service) Call(method string, ctx context.Context, reqObj interface{}) (
 		return nil, errors.New("Parse grpc client error")
 	}
 
+	log.Println("Grpc state => ", conn.GetState())
+	log.Println("Calling the method => ", method)
+	log.Printf("Reqobj => %#v", reqObj)
+
 	var methodArgs []reflect.Value
 	methodArgs = append(methodArgs, reflect.ValueOf(ctx))
 	methodArgs = append(methodArgs, reflect.ValueOf(reqObj))
 	// Call grpc method
 	methodVals := client.MethodByName(method).Call(methodArgs)
 
+	log.Printf("Method vals => %#v", methodVals)
+
 	var respResult interface{}
 	var respError error
 	if methodVals != nil && len(methodVals) > 0 {
 		if methodVals[0].CanInterface() {
 			if methodVals[0].Interface() != nil {
+				log.Println("Success of calling.")
 				respResult = methodVals[0].Interface()
+				log.Printf("The resp result in success => %#v", respResult)
 			}
 		}
 	}
 	if methodVals != nil && len(methodVals) > 1 {
 		if methodVals[1].CanInterface() {
 			if methodVals[1].Interface() != nil {
+				log.Println("Error in calling.")
 				respError = methodVals[1].Interface().(error)
 			}
 		}
