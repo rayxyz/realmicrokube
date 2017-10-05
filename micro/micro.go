@@ -1,13 +1,10 @@
 package micro
 
 import (
-	"encoding/json"
 	"errors"
 	"flag"
-	"io/ioutil"
 	"log"
 	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"realmicrokube/utils"
@@ -20,7 +17,6 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"golang.org/x/net/context"
-
 	"google.golang.org/grpc"
 	"k8s.io/api/apps/v1beta2"
 	kbapiv1 "k8s.io/api/core/v1"
@@ -99,7 +95,7 @@ type KubeService struct {
 	Name       string
 	Port       int32
 	TargetPort int32
-	Endpoints  kbapiv1.Endpoints
+	Endpoints  *kbapiv1.Endpoints
 }
 
 func NewService(config *ServiceConfig, server interface{}, grpcRegisterServer interface{}) {
@@ -223,7 +219,7 @@ func newKubeService(service *KubeService) (*kbapiv1.Service, error) {
 
 func NewServiceClient(service string, newClientRef interface{}) (*Service, error) {
 	if service == "" || newClientRef == nil {
-		return nil, errors.New("Create service client error. Arguments nil.")
+		return nil, errors.New("create service client error. Arguments nil")
 	}
 	srv, err := queryKubeService("default", service)
 
@@ -235,11 +231,33 @@ func NewServiceClient(service string, newClientRef interface{}) (*Service, error
 		return nil, err
 	}
 
-	var endpoints kbapiv1.Endpoints
-	resp, err := http.Get("/api/v1/endpoints/" + service)
-	content, err := ioutil.ReadAll(resp.Body)
-	json.Unmarshal(content, &endpoints)
-	log.Println("Service end points => ", endpoints)
+	var endpoints *kbapiv1.Endpoints
+	endpoints, err = clientset.CoreV1().Endpoints("default").Get(service, metav1.GetOptions{})
+	if err != nil {
+		log.Println("Get endpoints error ", err)
+	}
+	// hc := &http.Client{}
+	//
+	// req, err := http.NewRequest("GET", "/api/v1/endpoints", nil)
+	// if err != nil {
+	// 	log.Println(err)
+	// 	return nil, err
+	// }
+	// resp, err := hc.Do(req)
+	// if err != nil && resp != nil {
+	// 	defer resp.Body.Close()
+	// }
+	// if err != nil {
+	// 	log.Println("Connection to log server error.")
+	// 	return nil, err
+	// }
+	// if resp.StatusCode == 200 {
+	// 	log.Println("Send log to logserver ok!")
+	// }
+	// log.Println("status => ", resp.Status, "status_code => ", resp.StatusCode)
+	// content, err := ioutil.ReadAll(resp.Body)
+	// json.Unmarshal(content, &endpoints)
+	log.Println(endpoints)
 
 	kubesvc := &KubeService{
 		Namespace: srv.Namespace,
@@ -266,14 +284,19 @@ func (s *Service) Call(method string, ctx context.Context, reqObj interface{}) (
 	// if err := c.do(ctx, "GET", c.nsEndpoint()+"endpoints/"+serviceName, &res); err != nil {
 	// 	return nil, err
 	// }
-	address := s.Config.Host + ":" + strconv.Itoa(s.Config.Port)
-	conn, err := grpc.Dial(address)
+	endaddrs := s.KubeService.Endpoints.Subsets[0].Addresses
+	log.Println(endaddrs)
+	// address := s.Config.Host + ":" + strconv.Itoa(s.Config.Port)
+	address := endaddrs[0].IP + ":" + strconv.Itoa(int(s.KubeService.Endpoints.Subsets[0].Ports[0].Port))
+	log.Println("IP address => ", address)
+	// auth, _ := credentials.
+	conn, err := grpc.Dial(address, grpc.WithInsecure())
 	if err != nil {
 		log.Println("Connection to server error.")
 		return nil, err
 	}
 	if conn == nil {
-		return nil, errors.New("Connection cannot be established.")
+		return nil, errors.New("Connection cannot be established")
 	}
 	defer conn.Close()
 
@@ -286,7 +309,7 @@ func (s *Service) Call(method string, ctx context.Context, reqObj interface{}) (
 	}
 
 	if client.IsNil() {
-		return nil, errors.New("Parse grpc client error.")
+		return nil, errors.New("Parse grpc client error")
 	}
 
 	var methodArgs []reflect.Value
