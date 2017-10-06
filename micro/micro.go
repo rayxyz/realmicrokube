@@ -80,6 +80,7 @@ func initKubeInCluster() {
 }
 
 func initLoadBalancer() {
+	log.Println("Init gRPC load balancer")
 	lb = kuberesolver.New()
 }
 
@@ -235,10 +236,10 @@ func NewServiceClient(service string, newClientRef interface{}) (*Service, error
 	srv, err := queryKubeService("default", service)
 
 	srvConf := &ServiceConfig{
-		Name: srv.GetName()
-		Host: srv.Spec.ClusterIP,
-		Port: int(srv.Spec.Ports[0].Port),
-		TargetPort: srv.Spec.Ports[0].TargetPort,
+		Name:       srv.GetName(),
+		Host:       srv.Spec.ClusterIP,
+		Port:       int(srv.Spec.Ports[0].Port),
+		TargetPort: srv.Spec.Ports[0].TargetPort.IntValue(),
 	}
 	if err != nil {
 		return nil, err
@@ -273,15 +274,16 @@ func queryKubeService(namespace, service string) (*kbapiv1.Service, error) {
 
 func (s *Service) Call(method string, ctx context.Context, reqObj interface{}) (interface{}, error) {
 	// Use grpc locad balancing strategy.
-	// grpc.WithBalancer(grpc.RoundRobin(lb.NewResolver()))
-	endaddrs := s.KubeService.Endpoints.Subsets[0].Addresses
-	log.Println(endaddrs)
+	// grpc.WithBalancer(grpc.RoundRobin(lb.Resolver()))
+	// endaddrs := s.KubeService.Endpoints.Subsets[0].Addresses
+	// log.Println(endaddrs)
 	// address := s.Config.Host + ":" + strconv.Itoa(s.Config.Port)
 	// address := endaddrs[0].IP + ":" + strconv.Itoa(int(s.KubeService.Endpoints.Subsets[0].Ports[0].Port))
 	// log.Println("IP address => ", address)
 	// conn, err := grpc.Dial(address, grpc.WithBalancer(grpc.RoundRobin(grpclb.NewResolver(clientset, "default"))))
-	log.Println("s.config.name => ", s.Config.Name, "s.config.port => ", s.Config.TargetPort)
-	conn, err := lb.Dial("kubernetes://"+s.Config.Name+":"+strconv.Itoa(s.Config.TargetPort), grpc.WithInsecure())
+	// log.Println("s.config.name => ", s.Config.Name, "s.config.port => ", s.Config.Port)
+	// conn, err := lb.Dial("kubernetes://"+s.Config.Name+":TargetPort", grpc.WithInsecure())
+	conn, err := grpc.Dial(s.Config.Name+":"+strconv.Itoa(s.Config.Port), grpc.WithInsecure())
 	if err != nil {
 		log.Println("Connection to server error.")
 		return nil, err
