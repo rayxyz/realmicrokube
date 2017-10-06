@@ -16,7 +16,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"realmicrokube/grpclb"
+	"realmicrokube/grpclb/kuberesolver"
 
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -27,10 +27,12 @@ import (
 )
 
 var clientset *kubernetes.Clientset
+var lb *kuberesolver.Balancer
 
 func init() {
 	log.Println("Initializing micro...")
 	initKubeInCluster()
+	initLoadBalancer()
 }
 
 func homeDir() string {
@@ -75,6 +77,10 @@ func initKubeInCluster() {
 	if err != nil {
 		panic(err.Error())
 	}
+}
+
+func initLoadBalancer() {
+	lb = kuberesolver.New()
 }
 
 type Service struct {
@@ -269,9 +275,11 @@ func (s *Service) Call(method string, ctx context.Context, reqObj interface{}) (
 	endaddrs := s.KubeService.Endpoints.Subsets[0].Addresses
 	log.Println(endaddrs)
 	// address := s.Config.Host + ":" + strconv.Itoa(s.Config.Port)
-	address := endaddrs[0].IP + ":" + strconv.Itoa(int(s.KubeService.Endpoints.Subsets[0].Ports[0].Port))
-	log.Println("IP address => ", address)
-	conn, err := grpc.Dial(address, grpc.WithBalancer(grpc.RoundRobin(grpclb.NewResolver(clientset, "default"))))
+	// address := endaddrs[0].IP + ":" + strconv.Itoa(int(s.KubeService.Endpoints.Subsets[0].Ports[0].Port))
+	// log.Println("IP address => ", address)
+	// conn, err := grpc.Dial(address, grpc.WithBalancer(grpc.RoundRobin(grpclb.NewResolver(clientset, "default"))))
+	log.Println("s.config.name => ", s.Config.Name, "s.config.port => ", s.Config.Port)
+	conn, err := lb.Dial("kubernetes://"+s.Config.Name+":"+strconv.Itoa(s.Config.Port), grpc.WithInsecure())
 	if err != nil {
 		log.Println("Connection to server error.")
 		return nil, err
