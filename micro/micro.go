@@ -235,8 +235,10 @@ func NewServiceClient(service string, newClientRef interface{}) (*Service, error
 	srv, err := queryKubeService("default", service)
 
 	srvConf := &ServiceConfig{
+		Name: srv.GetName()
 		Host: srv.Spec.ClusterIP,
 		Port: int(srv.Spec.Ports[0].Port),
+		TargetPort: srv.Spec.Ports[0].TargetPort,
 	}
 	if err != nil {
 		return nil, err
@@ -278,8 +280,8 @@ func (s *Service) Call(method string, ctx context.Context, reqObj interface{}) (
 	// address := endaddrs[0].IP + ":" + strconv.Itoa(int(s.KubeService.Endpoints.Subsets[0].Ports[0].Port))
 	// log.Println("IP address => ", address)
 	// conn, err := grpc.Dial(address, grpc.WithBalancer(grpc.RoundRobin(grpclb.NewResolver(clientset, "default"))))
-	log.Println("s.config.name => ", s.Config.Name, "s.config.port => ", s.Config.Port)
-	conn, err := lb.Dial("kubernetes://"+s.Config.Name+":"+strconv.Itoa(s.Config.Port), grpc.WithInsecure())
+	log.Println("s.config.name => ", s.Config.Name, "s.config.port => ", s.Config.TargetPort)
+	conn, err := lb.Dial("kubernetes://"+s.Config.Name+":"+strconv.Itoa(s.Config.TargetPort), grpc.WithInsecure())
 	if err != nil {
 		log.Println("Connection to server error.")
 		return nil, err

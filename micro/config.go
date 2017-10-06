@@ -9,8 +9,9 @@ type DBConfig struct {
 }
 
 type ServiceConfig struct {
-	Name  string
-	Label string
-	Host  string
-	Port  int
+	Name       string
+	Label      string
+	Host       string
+	Port       int
+	TargetPort int
 }
