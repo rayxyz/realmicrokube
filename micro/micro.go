@@ -16,7 +16,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
-	lb "realmicrokube/grpclb"
+	"realmicrokube/grpclb"
 
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -265,13 +265,13 @@ func queryKubeService(namespace, service string) (*kbapiv1.Service, error) {
 
 func (s *Service) Call(method string, ctx context.Context, reqObj interface{}) (interface{}, error) {
 	// Use grpc locad balancing strategy.
-	grpc.WithBalancer(grpc.RoundRobin(lb.NewResolver()))
+	// grpc.WithBalancer(grpc.RoundRobin(lb.NewResolver()))
 	endaddrs := s.KubeService.Endpoints.Subsets[0].Addresses
 	log.Println(endaddrs)
 	// address := s.Config.Host + ":" + strconv.Itoa(s.Config.Port)
 	address := endaddrs[0].IP + ":" + strconv.Itoa(int(s.KubeService.Endpoints.Subsets[0].Ports[0].Port))
 	log.Println("IP address => ", address)
-	conn, err := grpc.Dial(address, grpc.WithInsecure())
+	conn, err := grpc.Dial(address, grpc.WithBalancer(grpc.RoundRobin(grpclb.NewResolver(clientset, "default"))))
 	if err != nil {
 		log.Println("Connection to server error.")
 		return nil, err
