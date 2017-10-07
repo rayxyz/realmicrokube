@@ -4,12 +4,6 @@
 // except subdirs
 !*/
 
-// except docker
-!/docker
-/docker/realmicroapi/bin
-/docker/realmicroserver/bin
-/docker/realmicrokube/bin
-
 // except glide files
 !glide*
 
@@ -31,3 +25,6 @@
 !manifest.json
 
 !*.patch
+
+// except docker
+!/docker
