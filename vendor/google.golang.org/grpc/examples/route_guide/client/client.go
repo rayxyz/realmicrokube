@@ -1,40 +1,25 @@
 /*
  *
- * Copyright 2015, Google Inc.
- * All rights reserved.
+ * Copyright 2015 gRPC authors.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *     * Redistributions of source code must retain the above copyright
- * notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above
- * copyright notice, this list of conditions and the following disclaimer
- * in the documentation and/or other materials provided with the
- * distribution.
- *     * Neither the name of Google Inc. nor the names of its
- * contributors may be used to endorse or promote products derived from
- * this software without specific prior written permission.
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  *
  */
 
 // Package main implements a simple gRPC client that demonstrates how to use gRPC-Go libraries
 // to perform unary, client streaming, server streaming and full duplex RPCs.
 //
-// It interacts with the route guide service whose definition can be found in proto/route_guide.proto.
+// It interacts with the route guide service whose definition can be found in routeguide/route_guide.proto.
 package main
 
 import (
@@ -47,12 +32,13 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	pb "google.golang.org/grpc/examples/route_guide/proto"
+	pb "google.golang.org/grpc/examples/route_guide/routeguide"
+	"google.golang.org/grpc/testdata"
 )
 
 var (
 	tls                = flag.Bool("tls", false, "Connection uses TLS if true, else plain TCP")
-	caFile             = flag.String("ca_file", "testdata/ca.pem", "The file containning the CA root cert file")
+	caFile             = flag.String("ca_file", "", "The file containning the CA root cert file")
 	serverAddr         = flag.String("server_addr", "127.0.0.1:10000", "The server address in the format of host:port")
 	serverHostOverride = flag.String("server_host_override", "x.test.youtube.com", "The server name use to verify the hostname returned by TLS handshake")
 )
@@ -115,12 +101,12 @@ func runRecordRoute(client pb.RouteGuideClient) {
 // runRouteChat receives a sequence of route notes, while sending notes for various locations.
 func runRouteChat(client pb.RouteGuideClient) {
 	notes := []*pb.RouteNote{
-		{&pb.Point{0, 1}, "First message"},
-		{&pb.Point{0, 2}, "Second message"},
-		{&pb.Point{0, 3}, "Third message"},
-		{&pb.Point{0, 1}, "Fourth message"},
-		{&pb.Point{0, 2}, "Fifth message"},
-		{&pb.Point{0, 3}, "Sixth message"},
+		{&pb.Point{Latitude: 0, Longitude: 1}, "First message"},
+		{&pb.Point{Latitude: 0, Longitude: 2}, "Second message"},
+		{&pb.Point{Latitude: 0, Longitude: 3}, "Third message"},
+		{&pb.Point{Latitude: 0, Longitude: 1}, "Fourth message"},
+		{&pb.Point{Latitude: 0, Longitude: 2}, "Fifth message"},
+		{&pb.Point{Latitude: 0, Longitude: 3}, "Sixth message"},
 	}
 	stream, err := client.RouteChat(context.Background())
 	if err != nil {
@@ -153,28 +139,23 @@ func runRouteChat(client pb.RouteGuideClient) {
 func randomPoint(r *rand.Rand) *pb.Point {
 	lat := (r.Int31n(180) - 90) * 1e7
 	long := (r.Int31n(360) - 180) * 1e7
-	return &pb.Point{lat, long}
+	return &pb.Point{Latitude: lat, Longitude: long}
 }
 
 func main() {
 	flag.Parse()
 	var opts []grpc.DialOption
 	if *tls {
-		var sn string
-		if *serverHostOverride != "" {
-			sn = *serverHostOverride
+		if *caFile == "" {
+			*caFile = testdata.Path("ca.pem")
 		}
-		var creds credentials.TransportAuthenticator
-		if *caFile != "" {
-			var err error
-			creds, err = credentials.NewClientTLSFromFile(*caFile, sn)
-			if err != nil {
-				log.Fatalf("Failed to create TLS credentials %v", err)
-			}
-		} else {
-			creds = credentials.NewClientTLSFromCert(nil, sn)
+		creds, err := credentials.NewClientTLSFromFile(*caFile, *serverHostOverride)
+		if err != nil {
+			log.Fatalf("Failed to create TLS credentials %v", err)
 		}
 		opts = append(opts, grpc.WithTransportCredentials(creds))
+	} else {
+		opts = append(opts, grpc.WithInsecure())
 	}
 	conn, err := grpc.Dial(*serverAddr, opts...)
 	if err != nil {
@@ -184,13 +165,16 @@ func main() {
 	client := pb.NewRouteGuideClient(conn)
 
 	// Looking for a valid feature
-	printFeature(client, &pb.Point{409146138, -746188906})
+	printFeature(client, &pb.Point{Latitude: 409146138, Longitude: -746188906})
 
 	// Feature missing.
-	printFeature(client, &pb.Point{0, 0})
+	printFeature(client, &pb.Point{Latitude: 0, Longitude: 0})
 
 	// Looking for features between 40, -75 and 42, -73.
-	printFeatures(client, &pb.Rectangle{&pb.Point{400000000, -750000000}, &pb.Point{420000000, -730000000}})
+	printFeatures(client, &pb.Rectangle{
+		Lo: &pb.Point{Latitude: 400000000, Longitude: -750000000},
+		Hi: &pb.Point{Latitude: 420000000, Longitude: -730000000},
+	})
 
 	// RecordRoute
 	runRecordRoute(client)

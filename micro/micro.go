@@ -16,8 +16,6 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"realmicrokube/grpclb/kuberesolver"
-
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"k8s.io/api/apps/v1beta2"
@@ -27,12 +25,10 @@ import (
 )
 
 var clientset *kubernetes.Clientset
-var lb *kuberesolver.Balancer
 
 func init() {
 	log.Println("Initializing micro...")
 	initKubeInCluster()
-	initLoadBalancer()
 }
 
 func homeDir() string {
@@ -79,11 +75,6 @@ func initKubeInCluster() {
 	}
 }
 
-func initLoadBalancer() {
-	log.Println("Init gRPC load balancer")
-	lb = kuberesolver.New()
-}
-
 type Service struct {
 	Config       *ServiceConfig
 	NewClientRef interface{}
@@ -102,6 +93,17 @@ type KubeServiceDeployConfig struct {
 type KubeService struct {
 	Namespace  string
 	Name       string
+	Port       int32
+	TargetPort int32
+	Endpoints  *kbapiv1.Endpoints
+	Replicas   int32
+}
+
+type KubeExternalService struct {
+	Namespace  string
+	Name       string
+	Type       string // NodePort, LoadBalancer
+	ExternalIP string
 	Port       int32
 	TargetPort int32
 	Endpoints  *kbapiv1.Endpoints
@@ -133,6 +135,7 @@ func NewService(config *ServiceConfig, server interface{}, grpcRegisterServer in
 }
 
 func DeployKubeService(deployment *KubeServiceDeployConfig) (success bool, desc string) {
+	deployment.Name = utils.DotStr2DashStr(deployment.Name)
 	deploy, err := newKubeDeployment(deployment)
 	if err != nil {
 		return false, err.Error()
@@ -230,6 +233,7 @@ func newKubeService(service *KubeService) (*kbapiv1.Service, error) {
 }
 
 func NewServiceClient(service string, newClientRef interface{}) (*Service, error) {
+	service = utils.DotStr2DashStr(service)
 	if service == "" || newClientRef == nil {
 		return nil, errors.New("create service client error. Arguments nil")
 	}
@@ -237,7 +241,6 @@ func NewServiceClient(service string, newClientRef interface{}) (*Service, error
 
 	srvConf := &ServiceConfig{
 		Name:       srv.GetName(),
-		Host:       srv.Spec.ClusterIP,
 		Port:       int(srv.Spec.Ports[0].Port),
 		TargetPort: srv.Spec.Ports[0].TargetPort.IntValue(),
 	}
@@ -250,8 +253,6 @@ func NewServiceClient(service string, newClientRef interface{}) (*Service, error
 	if err != nil {
 		log.Println("Get endpoints error ", err)
 	}
-
-	log.Println(endpoints)
 
 	kubesvc := &KubeService{
 		Namespace: srv.Namespace,
@@ -273,16 +274,13 @@ func queryKubeService(namespace, service string) (*kbapiv1.Service, error) {
 }
 
 func (s *Service) Call(method string, ctx context.Context, reqObj interface{}) (interface{}, error) {
-	// Use grpc locad balancing strategy.
-	// grpc.WithBalancer(grpc.RoundRobin(lb.Resolver()))
 	// endaddrs := s.KubeService.Endpoints.Subsets[0].Addresses
 	// log.Println(endaddrs)
 	// address := s.Config.Host + ":" + strconv.Itoa(s.Config.Port)
 	// address := endaddrs[0].IP + ":" + strconv.Itoa(int(s.KubeService.Endpoints.Subsets[0].Ports[0].Port))
 	// log.Println("IP address => ", address)
+	// Use grpc locad balancing strategy.
 	// conn, err := grpc.Dial(address, grpc.WithBalancer(grpc.RoundRobin(grpclb.NewResolver(clientset, "default"))))
-	// log.Println("s.config.name => ", s.Config.Name, "s.config.port => ", s.Config.Port)
-	// conn, err := lb.Dial("kubernetes://"+s.Config.Name+":TargetPort", grpc.WithInsecure())
 	conn, err := grpc.Dial(s.Config.Name+":"+strconv.Itoa(s.Config.Port), grpc.WithInsecure())
 	if err != nil {
 		log.Println("Connection to server error.")
@@ -305,17 +303,11 @@ func (s *Service) Call(method string, ctx context.Context, reqObj interface{}) (
 		return nil, errors.New("Parse grpc client error")
 	}
 
-	log.Println("Grpc state => ", conn.GetState())
-	log.Println("Calling the method => ", method)
-	log.Printf("Reqobj => %#v", reqObj)
-
 	var methodArgs []reflect.Value
 	methodArgs = append(methodArgs, reflect.ValueOf(ctx))
 	methodArgs = append(methodArgs, reflect.ValueOf(reqObj))
 	// Call grpc method
 	methodVals := client.MethodByName(method).Call(methodArgs)
-
-	log.Printf("Method vals => %#v", methodVals)
 
 	var respResult interface{}
 	var respError error

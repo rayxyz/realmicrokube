@@ -22,10 +22,8 @@ func newServer() pb.SdUserServer {
 
 func newService() {
 	config := &micro.ServiceConfig{
-		Name:  "com.shendu.service.usercenter.user",
-		Label: "usercenter",
-		Host:  "127.0.0.1",
-		Port:  9999,
+		Name: "com.shendu.service.usercenter.user",
+		Port: 9999,
 	}
 	micro.NewService(config, newServer(), pb.RegisterSdUserServer)
 }

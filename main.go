@@ -15,7 +15,6 @@ import (
 
 	"realmicrokube/micro"
 
-	appsv1beta1 "k8s.io/api/apps/v1beta1"
 	apiv1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/kubernetes"
@@ -131,52 +130,10 @@ func showPods(w http.ResponseWriter, r *http.Request) {
 
 func int32Ptr(i int32) *int32 { return &i }
 
-func newDeployment(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("New deployment.")
-	deploymentClient := clientset.AppsV1beta1().Deployments(apiv1.NamespaceDefault)
-	deployment := &appsv1beta1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "consul",
-		},
-		Spec: appsv1beta1.DeploymentSpec{
-			Replicas: int32Ptr(1),
-			Template: apiv1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"app": "consul",
-					},
-				},
-				Spec: apiv1.PodSpec{
-					Containers: []apiv1.Container{
-						{
-							Name:  "consul",
-							Image: "ray-xyz.com:9090/consul",
-							Ports: []apiv1.ContainerPort{
-								{
-									Name:          "micro",
-									Protocol:      apiv1.ProtocolTCP,
-									ContainerPort: 8500,
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-	log.Println("Creating consul deployment...")
-	deploy, err := deploymentClient.Create(deployment)
-	if err != nil {
-		log.Println(err.Error())
-		return
-	}
-	log.Println("Successfully deployed a deployment. Deployment name => ", deploy.GetObjectMeta().GetName())
-}
-
 func deployService(w http.ResponseWriter, r *http.Request) {
 	deployConfig := &micro.KubeServiceDeployConfig{
 		Namespace:  apiv1.NamespaceDefault,
-		Name:       "com-shendu-service-usercenter-user",
+		Name:       "com.shendu.service.usercenter.user",
 		Port:       int32(83),
 		TargetPort: int32(9999),
 		Image:      "ray-xyz.com:9090/realmicroserver",
