@@ -4,4 +4,6 @@ MAINTAINER Raywang
 
 ADD bin/server /usr/local/bin
 
+RUN ["chmod", "+x", "/usr/local/bin/server"]
+
 ENTRYPOINT /usr/local/bin/server
