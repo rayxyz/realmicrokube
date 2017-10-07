@@ -76,6 +76,10 @@ func initKubeInCluster() {
 }
 
 type Service struct {
+	Config *ServiceConfig
+}
+
+type ServiceClient struct {
 	Config       *ServiceConfig
 	NewClientRef interface{}
 	KubeService  *KubeService
@@ -232,7 +236,7 @@ func newKubeService(service *KubeService) (*kbapiv1.Service, error) {
 	return svc, nil
 }
 
-func NewServiceClient(service string, newClientRef interface{}) (*Service, error) {
+func NewServiceClient(service string, newClientRef interface{}) (*ServiceClient, error) {
 	service = utils.DotStr2DashStr(service)
 	if service == "" || newClientRef == nil {
 		return nil, errors.New("create service client error. Arguments nil")
@@ -260,7 +264,7 @@ func NewServiceClient(service string, newClientRef interface{}) (*Service, error
 		Endpoints: endpoints,
 	}
 
-	return &Service{Config: srvConf, NewClientRef: newClientRef, KubeService: kubesvc}, nil
+	return &ServiceClient{Config: srvConf, NewClientRef: newClientRef, KubeService: kubesvc}, nil
 }
 
 func queryKubeService(namespace, service string) (*kbapiv1.Service, error) {
@@ -273,7 +277,7 @@ func queryKubeService(namespace, service string) (*kbapiv1.Service, error) {
 	return srv, nil
 }
 
-func (s *Service) Call(method string, ctx context.Context, reqObj interface{}) (interface{}, error) {
+func (s *ServiceClient) Call(method string, ctx context.Context, reqObj interface{}) (interface{}, error) {
 	// endaddrs := s.KubeService.Endpoints.Subsets[0].Addresses
 	// log.Println(endaddrs)
 	// address := s.Config.Host + ":" + strconv.Itoa(s.Config.Port)

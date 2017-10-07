@@ -11,13 +11,19 @@ import (
 	micro "realmicrokube/micro"
 )
 
-func call(w http.ResponseWriter, r *http.Request) {
-	client, err := micro.NewServiceClient("com.shendu.service.usercenter.user", pb.NewSdUserClient)
+var client *micro.ServiceClient
+
+func init() {
+	serviceClient, err := micro.NewServiceClient("com.shendu.service.usercenter.user", pb.NewSdUserClient)
 	if err != nil {
-		log.Println(err.Error())
+		log.Fatal(err)
 		return
 	}
+	client = serviceClient
 	log.Println("Successfully created service client => ", client.Config.Name)
+}
+
+func call(w http.ResponseWriter, r *http.Request) {
 	resp, err := client.Call("GetUserInfo", context.TODO(), &pb.UserReq{Id: 123456})
 	if err != nil {
 		log.Println(err)
