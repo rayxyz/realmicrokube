@@ -1,0 +1,9 @@
+/*
+
+!*.go
+
+!*.yaml
+
+!/docker/
+/docker/bin/*
+
