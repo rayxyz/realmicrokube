@@ -1,5 +1,9 @@
 /*
 
+!*/
+
+!.gitignore
+
 !*.go
 
 !*.yaml
@@ -7,3 +11,4 @@
 !/docker/
 /docker/bin/*
 
+!*.md
